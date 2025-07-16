@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Force-Directed Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #f5f7fa;
+            color: #222;
+        }
+        .node {
+            stroke: #fff;
+            stroke-width: 0.5px;
+        }
+        .link {
+            stroke: #b6c6e3;
+            stroke-opacity: 0.7;
+            stroke-width: 1.2px;
+        }
+        text, .svg-title {
+            font-family: 'Poppins', sans-serif;
+            font-size: 12px;
+            fill: #222;
+        }
+        .svg-title {
+            font-size: 28px;
+            font-weight: 600;
+            fill: #1976d2;
+        }
+        .border {
+            stroke: #eaeaea;
+            stroke-width: 2;
+            fill: none;
+        }
+        .slider-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(44, 62, 80, 0.07);
+            padding: 10px 20px;
+        }
+        .slider {
+            width: 100%;
+            accent-color: #1976d2;
+        }
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            width: 150px;
+            height: auto;
+            padding: 8px 10px;
+            font-size: 13px;
+            background: #fff;
+            color: #1976d2;
+            border-radius: 10px;
+            border: 1px solid #eaeaea;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        select, label {
+            font-family: 'Poppins', sans-serif;
+            font-size: 1rem;
+            margin: 0 8px 0 0;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid #eaeaea;
+            background: #fff;
+            color: #222;
+        }
+        label {
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <svg width="880" height="600"></svg>
+
+    <div>
+        <label for="region-filter">Select Region:</label>
+        <select id="region-filter">
+            <option value="all">All Regions</option>
+        </select>
+    </div>
+
+    <div class="slider-container">
+        <input type="range" class="slider" min="2000" max="2017" step="1" value="2000">
+        <span id="year-label">Year: 2000</span>
+    </div>
+
+    <script>
+        d3.csv("preprocessed_data.csv").then(function (data) {
+            const nodes = [];
+            const links = [];
+            const nodeMap = new Map();
+            const regions = new Set();
+
+    
+            data.forEach(row => {
+                const geoAreaCode = row.geoAreaCode;
+                const geoAreaName = row.geoAreaName;
+                const parentCode = row.parentCode;
+                const parentName = row.parentName;
+    
+                regions.add(parentName); 
+
+                if (!nodeMap.has(geoAreaCode)) {
+                    const nodeData = { 
+                        id: geoAreaCode, 
+                        name: geoAreaName, 
+                        isParent: false,
+                        parent: parentName
+                    };
+    
+                    // Add yearly values to node data
+                    for (let year = 2000; year <= 2017; year++) {
+                        nodeData[`value_${year}`] = +row[`value_${year}`] || 0;
+                    }
+    
+                    nodeMap.set(geoAreaCode, nodeData);
+                    nodes.push(nodeData);
+                }
+    
+                if (parentCode && !nodeMap.has(parentCode)) {
+                    const parentNodeData = { 
+                        id: parentCode, 
+                        name: parentName, 
+                        isParent: true,
+                        parent: null 
+                    };
+    
+    
+                    nodeMap.set(parentCode, parentNodeData);
+                    nodes.push(parentNodeData);
+                }
+    
+                if (parentCode) {
+                    links.push({ source: parentCode, target: geoAreaCode });
+                }
+            });
+
+            const regionFilter = d3.select("#region-filter");
+            regions.forEach(region => {
+                regionFilter.append("option").attr("value", region).text(region);
+            });
+
+
+            const svg = d3.select("svg"),
+                width = +svg.attr("width"),
+                height = +svg.attr("height");
+
+            // Tooltip element
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip");
+
+// Add title inside the SVG
+svg.append("text")
+    .attr("class", "svg-title")
+    .attr("x", width / 2)
+    .attr("y", 50) // Position at the top
+    .attr("text-anchor", "middle")
+    .text("Force-Directed Graph");
+
+svg.append("rect")
+    .attr("class", "border")
+    .attr("x", 0)
+    .attr("y", 0)
+    .attr("width", width)
+    .attr("height", height);
+
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 4])  // Control zooming limits (min, max)
+            .on("zoom", zoomed);
+
+        // Apply zoom behavior to the SVG
+        svg.call(zoom);
+
+        // Create a group for the graph elements (nodes, links, labels)
+        const graphGroup = svg.append("g");
+
+        // Zoom function
+        function zoomed(event) {
+            graphGroup.attr("transform", event.transform);
+        }
+
+const simulation = d3.forceSimulation(nodes)
+.force("link", d3.forceLink(links).id(d => d.id).distance(link => {
+                const year = +d3.select(".slider").property("value");
+                return computeLinkDistance(link, year);
+            }))
+    .force("charge", d3.forceManyBody().strength(-200))
+    .force("center", d3.forceCenter(width / 2, height / 2))
+    .force("x", d3.forceX().x(d => Math.max(20, Math.min(width - 20, d.x))).strength(0.1))
+    .force("y", d3.forceY().y(d => Math.max(20, Math.min(height - 20, d.y))).strength(0.1));
+
+const link = svg.append("g")
+    .attr("class", "links")
+    .selectAll("line")
+    .data(links)
+    .enter().append("line")
+    .attr("class", "link");
+
+const node = svg.append("g")
+    .attr("class", "nodes")
+    .selectAll("circle")
+    .data(nodes)
+    .enter().append("circle")
+    .attr("class", "node")
+    .attr("r", d => d.isParent ? 6 : 4) // Set bigger radius for parent nodes
+    .attr("fill", d => d.isParent ? "#014D4E" : "#5bc0de") // Set color for parent and child nodes
+    .call(d3.drag()
+        .on("start", dragStarted)
+        .on("drag", dragged)
+        .on("end", dragEnded))
+        .on("mouseover", function(event, d) {
+    // On hover, change color but zoom in for parent nodes
+    if (d.isParent) {
+        d3.select(this)
+            .transition() // Apply transition for zoom effect
+            .duration(200) // Duration of the zoom effect
+            .attr("r", 10)  // Zoom in by increasing the radius
+            .attr("fill", "#014D4E"); // Keep the color for parents
+    } else {
+        d3.select(this)
+            .attr("r", 4)  // Keep child size unchanged
+            .attr("fill", "#014D4E"); // Change color to a darker shade
+    }
+
+    // Show tooltip only for countries
+    if (!d.isParent) {
+                    const year = +d3.select(".slider").property("value");
+                    const value = d[`value_${year}`] || 0;
+
+                    tooltip.transition().duration(200).style("opacity", 1);
+                    tooltip.html(`<strong>${d.name}</strong><br>Cases: ${value}`)
+                        .style("left", `${event.pageX + 10}px`)
+                        .style("top", `${event.pageY - 28}px`);
+                } else {
+                    tooltip.transition().duration(200).style("opacity", 1);
+                    tooltip.html(`<strong>${d.name}</strong>`)
+                        .style("left", `${event.pageX + 10}px`)
+                        .style("top", `${event.pageY - 28}px`);
+                }
+})
+
+.on("mouseout", function(event, d) {
+    // On mouseout, reset color and zoom (size) for parent and child nodes
+    if (d.isParent) {
+        d3.select(this)
+            .transition() // Apply transition for zoom out effect
+            .duration(200) // Duration for zoom out
+            .attr("r", 6)  // Reset parent size to original
+            .attr("fill", "#014D4E"); // Keep the color
+    } else {
+        d3.select(this)
+            .attr("r", 4)  // Keep child size unchanged
+            .attr("fill", "#5bc0de"); // Reset child color
+    }
+
+    tooltip.transition().duration(500).style("opacity", 0);
+})
+
+    .on("click", function(event, d) {
+        // On click, change color without changing size for child nodes
+        if (d.isParent) {
+            d3.select(this)
+                .attr("fill", "#d9534f")  // Change color for parent node
+                .attr("r", 6);  // Keep parent size unchanged
+        } else {
+            d3.select(this)
+                .attr("fill", "#d9534f")  // Change color for child node
+                .attr("r", 4);  // Keep child size unchanged
+        }
+
+        // Optionally, reset the other nodes' color on click
+        node.attr("fill", d => d.isParent ? "#014D4E" : "#5bc0de")
+            .attr("r", d => d.isParent ? 6 : 4); // Keep the size of other nodes as-is
+    });
+
+            node.append("title")
+                .text(d => d.name);
+
+            svg.append("g")
+                .attr("class", "labels")
+                .selectAll("text")
+                .data(nodes.filter(d => d.isParent))
+                .enter().append("text")
+                .attr("x", d => d.x)
+                .attr("y", d => d.y)
+                .attr("text-anchor", "middle")
+                .attr("dy", "-6")
+                .text(d => d.name);
+
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => constrain(d.source.x, 0, width))
+                    .attr("y1", d => constrain(d.source.y, 0, height))
+                    .attr("x2", d => constrain(d.target.x, 0, width))
+                    .attr("y2", d => constrain(d.target.y, 0, height));
+
+                node
+                    .attr("cx", d => constrain(d.x, 0, width))
+                    .attr("cy", d => constrain(d.y, 0, height));
+
+                svg.selectAll(".labels text")
+                    .attr("x", d => constrain(d.x, 0, width))
+                    .attr("y", d => constrain(d.y - 6, 0, height));
+                    
+            });
+
+             // Slider functionality to update the year
+        d3.select(".slider").on("input", function () {
+            const year = +this.value;
+            d3.select("#year-label").text(`Year: ${year}`);
+            
+            simulation.force("link").distance(link => computeLinkDistance(link, year));
+            simulation.alpha(1).restart();
+        });
+
+        d3.select("#region-filter").on("change", function () {
+    const selectedRegion = this.value;
+
+    // Filter nodes and links
+    const filteredNodes = selectedRegion === "all"
+        ? nodes
+        : nodes.filter(d => d.isParent || d.parent === selectedRegion);
+    const filteredLinks = links.filter(link =>
+        filteredNodes.includes(link.source) && filteredNodes.includes(link.target)
+    );
+
+    // Ensure valid coordinates
+    filteredNodes.forEach(node => {
+        if (!node.x || !node.y) {
+            node.x = width / 2 + Math.random() * 100 - 50;
+            node.y = height / 2 + Math.random() * 100 - 50;
+        }
+    });
+
+    // Update nodes and links in the visualization
+    node.data(filteredNodes).join(
+        enter => enter.append("circle")
+            .attr("class", "node")
+            .attr("r", d => d.isParent ? 6 : 4)
+            .attr("fill", d => d.isParent ? "#014D4E" : "#5bc0de")
+            .call(d3.drag()
+                .on("start", dragStarted)
+                .on("drag", dragged)
+                .on("end", dragEnded)),
+        update => update
+            .attr("r", d => d.isParent ? 6 : 4)
+            .attr("fill", d => d.isParent ? "#014D4E" : "#5bc0de"),
+        exit => exit.remove()
+    );
+
+    link.data(filteredLinks).join(
+        enter => enter.append("line").attr("class", "link"),
+        update => update,
+        exit => exit.remove()
+    );
+
+    // Update simulation
+    simulation.nodes(filteredNodes);
+    simulation.force("link").links(filteredLinks);
+    simulation.alpha(1).restart();
+});
+
+
+
+        // Function to compute link distance based on TB cases
+        function computeLinkDistance(link, year) {
+            const value = link.target[`value_${year}`] || 0;
+            return normalizeValue(value, 10, 300); // Adjust max length as needed
+        }
+
+        // Function to normalize values
+        function normalizeValue(value, min, max) {
+            const range = max - min;
+            const normalized = min + ((value - 0) / (1000 - 0)) * range; // Assume max TB cases is 1000
+            return Math.max(min, Math.min(normalized, max)); // Constrain within bounds
+        }
+
+        function constrain(value, min, max) {
+            return Math.max(min, Math.min(value, max));
+        }
+
+        function dragStarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragEnded(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+    });
+</script>
+</body>
+</html>

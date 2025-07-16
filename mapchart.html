@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geographic Map Chart with Slider</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson@3.1.0/dist/topojson.min.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+            background: #f5f7fa;
+            color: #222;
+        }
+        #map {
+            width: 100%;
+            height: 90vh;
+            position: relative;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(44, 62, 80, 0.08);
+            border: 1px solid #eaeaea;
+        }
+        #controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 18px 0 10px 0;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(44, 62, 80, 0.07);
+            padding: 10px 20px;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 10px 14px;
+            background: #fff;
+            color: #1976d2;
+            border-radius: 10px;
+            border: 1px solid #eaeaea;
+            pointer-events: none;
+            visibility: hidden;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px;
+        }
+        .legend {
+            font-size: 13px;
+            font-family: 'Poppins', sans-serif;
+        }
+        #yearRange {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 300px;
+            height: 8px;
+            border: 2px solid #b6c6e3;
+            outline: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #e0e7ef;
+        }
+        #yearRange::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            border: 2px solid #1976d2;
+            cursor: pointer;
+        }
+        #yearRange::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            border: 2px solid #1976d2;
+            cursor: pointer;
+        }
+        #yearRange::-ms-thumb {
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            border: 2px solid #1976d2;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="map"></div>
+    <div id="controls">
+        <label for="yearRange">Year:</label>
+        <input type="range" id="yearRange" min="2000" max="2017" value="2000" step="1">
+        <span id="currentYear">2000</span>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const width = window.innerWidth * 0.9;
+        const height = window.innerHeight * 0.85;
+        const projection = d3.geoNaturalEarth1().scale(200).translate([width / 2, height / 1.5]);
+        const path = d3.geoPath().projection(projection);
+    
+        const svg = d3.select('#map')
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height);
+    
+        const g = svg.append('g');
+        const tooltip = d3.select('#tooltip');
+    
+        const slider = document.getElementById('yearRange');
+        const yearRange = d3.select('#yearRange');
+        const currentYear = d3.select('#currentYear');
+    
+        slider.addEventListener('input', function () {
+            const value = (this.value - this.min) / (this.max - this.min) * 100;
+            this.style.background = `linear-gradient(to right, rgb(161, 38, 38) ${value}%, #fcfafa ${value}%)`;
+        });
+    
+        // Define the ranges for intensity
+        const ranges = [
+            { min: 0, max: 10 },
+            { min: 10, max: 50 },
+            { min: 50, max: 100 },
+            { min: 100, max: 200 },
+            { min: 200, max: 500 },
+            { min: 500, max: 1000 },
+            { min: 1000, max: Infinity }
+        ];
+    
+        const colorScale = d3.scaleThreshold()
+            .domain(ranges.map(range => range.max).slice(0, -1)) // Exclude Infinity from colorScale
+            .range(d3.schemeReds[ranges.length]);
+    
+        svg.append('text')
+            .attr('x', width / 2)
+            .attr('y', 40)
+            .attr('text-anchor', 'middle')
+            .style('font-size', '24px')
+            .style('font-weight', 'bold')
+            .text('MapChart Showing Intensity of TB Cases in the World');
+    
+        const legendWidth = 500;
+        const legendHeight = 20;
+    
+        const legendThresholds = [0, 10, 50, 100, 200, 500, 1000];
+
+const legendSvg = svg.append('g')
+    .attr('class', 'legend')
+    .attr('transform', `translate(${width - legendWidth }, ${height - 50})`);
+
+// Create clickable legend for ranges (linked to thresholds for text)
+legendSvg.selectAll("rect")
+    .data(ranges)
+    .join("rect")
+    .attr("x", (d, i) => i * (legendWidth / ranges.length))
+    .attr("y", 0)
+    .attr("width", legendWidth / ranges.length)
+    .attr("height", legendHeight)
+    .attr("fill", (d, i) => colorScale(d.min))
+    .attr("stroke", "#000")
+    .style("cursor", "pointer")
+    .on("click", function (event, d) {
+        highlightRange(d.min, d.max); // Highlight countries within the range
+    });
+
+// Add legend text using legendThresholds
+legendSvg.selectAll("text")
+    .data(legendThresholds)
+    .join("text")
+    .attr("x", (d, i) => i * (legendWidth / legendThresholds.length))
+    .attr("y", legendHeight + 15)
+    .style("font-size", "12px")
+    .text((d, i) => {
+        if (i === legendThresholds.length - 1) {
+            return `${d.toLocaleString()}+`;
+        }
+        return `${legendThresholds[i].toLocaleString()}-${legendThresholds[i + 1].toLocaleString()}`;
+    });
+
+        let dataMap = {};
+    
+        function highlightRange(min, max) {
+            g.selectAll('path')
+                .attr('stroke-width', 0.5)
+                .attr('stroke', '#fff')
+                .filter(d => {
+                    const total = dataMap[+yearRange.node().value]?.[d.properties.name] || 0;
+                    return total >= min && total < max; // Check if country lies in the range
+                })
+                .attr('stroke', 'black')
+                .attr('stroke-width', 2);
+        }
+    
+        const zoom = d3.zoom()
+            .scaleExtent([1, 8])
+            .on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+    
+        svg.call(zoom);
+    
+        Promise.all([
+            d3.json('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson'),
+            d3.csv('preprocessed_data.csv')
+        ]).then(([world, data]) => {
+            const midPointData = data.filter(d => d.boundsCode === '_T');
+            const nameMapping = {
+                'United States of America': 'USA',
+                'Russian Federation': 'Russia',
+                'Iran (Islamic Republic of)': 'Iran',
+            };
+    
+            midPointData.forEach(d => {
+                const country = nameMapping[d.geoAreaName] || d.geoAreaName;
+                for (let year = 2000; year <= 2022; year++) {
+                    if (!dataMap[year]) dataMap[year] = {};
+                    dataMap[year][country] = +d[`value_${year}`] || 0;
+                }
+            });
+    
+            function updateMap(year) {
+                g.selectAll('path')
+                    .data(world.features)
+                    .join('path')
+                    .attr('d', path)
+                    .attr('fill', d => {
+                        const total = dataMap[year]?.[d.properties.name] || 0;
+                        return colorScale(total);
+                    })
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 0.5)
+                    .on('mouseover', (event, d) => {
+                        const total = dataMap[year]?.[d.properties.name] || 0;
+                        d3.select(event.currentTarget)
+                            .attr('stroke', 'black')
+                            .attr('stroke-width', 2);
+                        tooltip.style('visibility', 'visible')
+                            .html(`<strong>${d.properties.name}</strong><br>Total Count: ${total}`)
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY - 20) + 'px');
+                    })
+                    .on('mousemove', (event) => {
+                        tooltip.style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY - 20) + 'px');
+                    })
+                    .on('mouseout', (event) => {
+                        d3.select(event.currentTarget)
+                            .attr('stroke', '#fff')
+                            .attr('stroke-width', 0.5);
+                        tooltip.style('visibility', 'hidden');
+                    });
+            }
+    
+            updateMap(+slider.value);
+    
+            yearRange.on('input', function () {
+                const year = +this.value;
+                currentYear.text(year);
+                updateMap(year);
+            });
+        });
+    </script>
+    
+    
+</body>
+
+</html>

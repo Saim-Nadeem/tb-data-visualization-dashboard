@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Hierarchical Tree Map</title>
+    <script src="https://d3js.org/d3.v7.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #f5f7fa;
+            color: #222;
+        }
+        #tree-map {
+            display: flex;
+            justify-content: center;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(44, 62, 80, 0.08);
+            border: 1px solid #eaeaea;
+            margin: 30px auto;
+            padding: 20px 0;
+        }
+        #tree-map text {
+            font-family: 'Poppins', sans-serif;
+        }
+        .tooltip {
+            font-family: 'Poppins', sans-serif;
+            position: absolute;
+            background: #fff;
+            color: #1976d2;
+            padding: 8px 12px;
+            border: 1px solid #eaeaea;
+            border-radius: 10px;
+            pointer-events: none;
+            opacity: 0;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            transition: opacity 0.2s;
+        }
+        .legend {
+            font-size: 14px;
+            font-family: 'Poppins', sans-serif;
+        }
+        .legend rect {
+            stroke: #eaeaea;
+            stroke-width: 1px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="tree-map"></div>
+    <script>
+        // Define continent groups
+        const continents = {
+            "Asia": ["Southern Asia", "Eastern Asia", "Southeastern Asia", "Western Asia", "Central Asia"],
+            "Africa": ["Northern Africa", "Sub-Saharan Africa"],
+            "North America": ["Northern America", "Central America", "Caribbean"],
+            "South America": ["South America"],
+            "Antarctica": ["Antarctica"],
+            "Europe": ["Eastern Europe", "Western Europe", "Northern Europe", "Southern Europe"],
+            "Australia": ["Australia and New Zealand", "Melanesia", "Micronesia", "Polynesia"]
+        };
+
+        // Define base colors for each continent
+        const baseColors = {
+            "Asia": "#ff7f0e",
+            "Africa": "#1f77b4",
+            "North America": "#2ca02c",
+            "South America": "#d62728",
+            "Antarctica": "#17becf",
+            "Europe": "#9467bd",
+            "Australia": "#8c564b"
+        };
+
+        // Function to load and process data
+        function loadData(regionFilter = null, continentFilter = null) {
+            d3.csv("preprocessed_data.csv").then(data => {
+                // Process data to merge duplicate countries
+                const mergedData = {};
+                data.forEach(row => {
+                    const country = row.geoAreaName;
+                    const region = row.parentName;
+
+                    // Skip rows that don't match the filters (if any)
+                    if ((regionFilter && region !== regionFilter) || (continentFilter && !continents[continentFilter].includes(region))) return;
+
+                    // Sum TB values across all years
+                    const size = d3.sum(Object.values(row).slice(10, -2).map(Number));
+
+                    if (!mergedData[country]) {
+                        mergedData[country] = { region, size };
+                    } else {
+                        mergedData[country].size += size;
+                    }
+                });
+
+                // Convert merged data to an array
+                const processedData = Object.entries(mergedData).map(([country, info]) => ({
+                    country,
+                    region: info.region,
+                    size: info.size
+                }));
+
+                // Build hierarchy
+                const hierarchy = {
+                    name: regionFilter || continentFilter || "World",
+                    children: []
+                };
+
+                // Helper functions to create continent and region nodes
+                function getOrCreateContinent(continentName) {
+                    let continent = hierarchy.children.find(c => c.name === continentName);
+                    if (!continent) {
+                        continent = { name: continentName, children: [] };
+                        hierarchy.children.push(continent);
+                    }
+                    return continent;
+                }
+
+                function getOrCreateRegion(continent, regionName) {
+                    let region = continent.children.find(r => r.name === regionName);
+                    if (!region) {
+                        region = { name: regionName, children: [] };
+                        continent.children.push(region);
+                    }
+                    return region;
+                }
+
+                // Populate hierarchy
+                processedData.forEach(({ country, region, size }) => {
+                    let continentName = null;
+                    for (const [key, regions] of Object.entries(continents)) {
+                        if (regions.includes(region)) {
+                            continentName = key;
+                            break;
+                        }
+                    }
+
+                    if (!continentName) return;
+
+                    const continentNode = getOrCreateContinent(continentName);
+                    const regionNode = getOrCreateRegion(continentNode, region);
+                    regionNode.children.push({ name: country, size });
+                });
+
+                // Set up dimensions
+                const width = 1400, height = 680;
+
+                // Create SVG container
+                const svg = d3.select("#tree-map")
+                    .append("svg")
+                    .attr("width", width)
+                    .attr("height", height);
+
+                // Create tooltip
+                const tooltip = d3.select("body").append("div")
+                    .attr("class", "tooltip");
+
+                // Function to draw treemap
+                function drawTreemap(data) {
+                    console.log("Drawing treemap with data:", data); // debugging line
+
+                    // Draw treemap without clearing tooltip here
+                    // Create a hierarchy and treemap layout
+                    const root = d3.hierarchy(data)
+                        .sum(d => d.size)
+                        .sort((a, b) => b.value - a.value);
+
+                    const treemap = d3.treemap()
+                        .size([width - 300, height]) // Adjusted width to leave space for legend
+                        .paddingOuter(10)
+                        .paddingInner(2);
+
+                    treemap(root);
+
+                    // Clear existing treemap
+                    svg.selectAll("*").remove();
+
+                    // Create color scales
+                    const colorScales = {};
+                    for (const [continent, color] of Object.entries(baseColors)) {
+                        colorScales[continent] = d3.scaleLinear()
+                            .domain([0, d3.max(root.descendants().filter(d => d.depth > 1), d => d.value || 1)])
+                            .range([d3.color(color).brighter(1.5), d3.color(color).darker(1.5)]);
+                    }
+
+                    // Draw rectangles
+                    const nodes = svg.selectAll("g")
+                        .data(root.descendants().filter(d => d.depth > 0)) // Exclude root node
+                        .join("g")
+                        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+                    nodes.append("rect")
+                        .attr("width", d => d.x1 - d.x0)
+                        .attr("height", d => d.y1 - d.y0)
+                        .attr("fill", d => {
+                            if (d.depth === 1) return baseColors[d.data.name];
+                            if (d.depth === 2 || d.depth === 3) {
+                                const continent = d.ancestors().find(ancestor => ancestor.depth === 1).data.name;
+                                return colorScales[continent](d.value);
+                            }
+                            return "#ccc";
+                        })
+                        .attr("stroke", "black")
+                        .attr("stroke-width", d => (d.depth === 1 ? 4 : 2)) // Thicker borders for continents
+                        .on("mouseover", function (event, d) {
+                            tooltip.style("opacity", 1)
+                                .html(`<strong>${d.data.name}</strong><br>Size: ${d.value}`)
+                                .style("left", (event.pageX + 10) + "px")
+                                .style("top", (event.pageY + 10) + "px");
+                        })
+                        .on("mousemove", function (event) {
+                            tooltip.style("left", (event.pageX + 10) + "px")
+                                .style("top", (event.pageY + 10) + "px");
+                        })
+                        .on("mouseout", function () {
+                            tooltip.style("opacity", 0);
+                        })
+                        .on("click", function (event, d) {
+                            console.log("Clicked on: ", d.data.name); // debugging line
+                            // Check if the clicked node has children (i.e., not a leaf node)
+                            if (d.children) {
+                                // Remove the tooltip and clear the current treemap
+                                d3.select("body").select(".tooltip").remove();
+                                d3.select("#tree-map").select("svg").remove(); // Clear the current treemap
+                                if (d.depth === 1) {
+                                    loadData(null, d.data.name); // Load data for the clicked continent
+                                } else if (d.depth === 2 || d.depth === 3) {
+                                    loadData(d.data.name); // Load data for the clicked region
+                                }
+                            } else {
+                                console.log("Clicked on a country (leaf node). No action taken.");
+                            }
+                        });
+
+                    // Add text labels
+                    nodes.append("text")
+                        .attr("x", 4)
+                        .attr("y", 20)
+                        .text(d => d.data.name)
+                        .attr("font-size", "12px")
+                        .attr("fill", "black");
+
+                    // Add legend
+                    const legend = svg.append("g")
+                        .attr("class", "legend")
+                        .attr("transform", `translate(${width - 180}, 20)`); // Positioned outside the treemap
+
+                    const legendItems = Object.entries(baseColors);
+                    legend.selectAll("g")
+                        .data(legendItems)
+                        .join("g")
+                        .attr("transform", (d, i) => `translate(0, ${i * 25})`) // Spaced out items
+                        .call(g => {
+                            g.append("rect")
+                                .attr("width", 20)
+                                .attr("height", 20)
+                                .attr("fill", d => d[1]);
+
+                            g.append("text")
+                                .attr("x", 30)
+                                .attr("y", 15)
+                                .text(d => d[0]);
+                        });
+                }
+
+                // Initial treemap
+                drawTreemap(hierarchy);
+
+            }).catch(error => {
+                console.error("Error loading CSV file:", error);
+            });
+        }
+
+        // Load initial data
+        loadData();
+    </script>
+    <button onclick="refreshPage()">All</button>
+    <script>
+        function refreshPage() {
+            location.reload();
+        }
+    </script>
+</body>
+
+</html>

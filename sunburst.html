@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Hierarchical Sunburst Chart</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.js"></script>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #f5f7fa;
+            color: #222;
+        }
+        #sunburst {
+            display: flex;
+            justify-content: center;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(44, 62, 80, 0.08);
+            border: 1px solid #eaeaea;
+            margin: 30px auto;
+            padding: 20px 0;
+        }
+        #sunburst text {
+            font-family: 'Poppins', sans-serif;
+        }
+        .tooltip {
+            font-family: 'Poppins', sans-serif;
+            position: absolute;
+            background: #fff;
+            color: #1976d2;
+            padding: 8px 12px;
+            border: 1px solid #eaeaea;
+            border-radius: 10px;
+            pointer-events: none;
+            opacity: 0;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            transition: opacity 0.2s;
+        }
+        .legend {
+            font-size: 14px;
+            font-family: 'Poppins', sans-serif;
+        }
+        .legend rect {
+            stroke: #eaeaea;
+            stroke-width: 1px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="sunburst"></div>
+    <script>
+        // Define continent groups
+        const continents = {
+            "Asia": ["Southern Asia", "Eastern Asia", "Southeastern Asia", "Western Asia", "Central Asia"],
+            "Africa": ["Northern Africa", "Sub-Saharan Africa"],
+            "North America": ["Northern America", "Central America", "Caribbean"],
+            "South America": ["South America"],
+            "Antarctica": ["Antarctica"],
+            "Europe": ["Eastern Europe", "Western Europe", "Northern Europe", "Southern Europe"],
+            "Australia": ["Australia and New Zealand", "Melanesia", "Micronesia", "Polynesia"]
+        };
+
+        const baseColors = {
+            "Asia": "#ff7f0e",
+            "Africa": "#1f77b4",
+            "North America": "#2ca02c",
+            "South America": "#d62728",
+            "Antarctica": "#17becf",
+            "Europe": "#9467bd",
+            "Australia": "#8c564b"
+        };
+
+        function loadData(regionFilter = null, continentFilter = null) {
+            d3.csv("preprocessed_data.csv").then(data => {
+                const mergedData = {};
+                data.forEach(row => {
+                    const country = row.geoAreaName;
+                    const region = row.parentName;
+
+                    if ((regionFilter && region !== regionFilter) || (continentFilter && !continents[continentFilter].includes(region))) return;
+
+                    const size = d3.sum(Object.values(row).slice(10, -2).map(Number));
+
+                    if (!mergedData[country]) {
+                        mergedData[country] = { region, size };
+                    } else {
+                        mergedData[country].size += size;
+                    }
+                });
+
+                const processedData = Object.entries(mergedData).map(([country, info]) => ({
+                    country,
+                    region: info.region,
+                    size: info.size
+                }));
+
+                const hierarchy = {
+                    name: regionFilter || continentFilter || "World",
+                    children: []
+                };
+
+                function getOrCreateContinent(continentName) {
+                    let continent = hierarchy.children.find(c => c.name === continentName);
+                    if (!continent) {
+                        continent = { name: continentName, children: [] };
+                        hierarchy.children.push(continent);
+                    }
+                    return continent;
+                }
+
+                function getOrCreateRegion(continent, regionName) {
+                    let region = continent.children.find(r => r.name === regionName);
+                    if (!region) {
+                        region = { name: regionName, children: [] };
+                        continent.children.push(region);
+                    }
+                    return region;
+                }
+
+                processedData.forEach(({ country, region, size }) => {
+                    let continentName = null;
+                    for (const [key, regions] of Object.entries(continents)) {
+                        if (regions.includes(region)) {
+                            continentName = key;
+                            break;
+                        }
+                    }
+
+                    if (!continentName) return;
+
+                    const continentNode = getOrCreateContinent(continentName);
+                    const regionNode = getOrCreateRegion(continentNode, region);
+                    regionNode.children.push({ name: country, size });
+                });
+
+                drawSunburst(hierarchy);
+            }).catch(error => {
+                console.error("Error loading CSV file:", error);
+            });
+        }
+
+        function drawSunburst(data) {
+            const width = 700, height = 650, radius = Math.min(width, height) / 2;
+
+            const svg = d3.select("#sunburst")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .append("g")
+                .attr("transform", `translate(${width / 2},${height / 2})`);
+
+            const partition = d3.partition()
+                .size([2 * Math.PI, radius]);
+
+            const root = d3.hierarchy(data)
+                .sum(d => d.size)
+                .sort((a, b) => b.value - a.value);
+
+            partition(root);
+
+            const arc = d3.arc()
+                .startAngle(d => d.x0)
+                .endAngle(d => d.x1)
+                .innerRadius(d => d.y0)
+                .outerRadius(d => d.y1);
+
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip");
+
+            svg.selectAll("path")
+                .data(root.descendants())
+                .join("path")
+                .attr("d", arc)
+                .attr("fill", d => {
+                    if (d.depth === 1) return baseColors[d.data.name];
+                    if (d.depth === 2 || d.depth === 3) {
+                        const continent = d.ancestors().find(ancestor => ancestor.depth === 1).data.name;
+                        return d3.color(baseColors[continent]).brighter(d.depth - 1);
+                    }
+                    return "#ccc";
+                })
+                .attr("stroke", "black")
+                .attr("stroke-width", 0.4)
+                .on("mouseover", function (event, d) {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.data.name}</strong><br>Size: ${d.value}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY + 10) + "px");
+                })
+                .on("mousemove", function (event) {
+                    tooltip.style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY + 10) + "px");
+                })
+                .on("mouseout", function () {
+                    tooltip.style("opacity", 0);
+                })
+                .on("click", function (event, d) {
+                    if (d.depth === 0) {
+                        // Reload the page if "World" (root node) is clicked
+                        refreshPage();
+                    } else if (d.children) {
+                        // Remove tooltip and clear current sunburst before reloading data
+                        d3.select("body").select(".tooltip").remove();
+                        d3.select("#sunburst").select("svg").remove();
+                        if (d.depth === 1) {
+                            loadData(null, d.data.name); // Load data for the clicked continent
+                        } else if (d.depth === 2 || d.depth === 3) {
+                            loadData(d.data.name); // Load data for the clicked region
+                        }
+                    }
+                });
+
+            svg.selectAll("text")
+                .data(root.descendants().filter(d => d.depth > 0 && d.depth <= 2)) // Show only depth 1 (continent) and 2 (region)
+                .join("text")
+                .attr("transform", d => {
+                    const angle = (d.x0 + d.x1) / 2 * 180 / Math.PI - 90;
+                    return `translate(${arc.centroid(d)}) rotate(${angle > 90 ? angle + 180 : angle})`;
+                })
+                .attr("text-anchor", d => (d.x0 + d.x1) / 2 > Math.PI ? "end" : "start")
+                .text(d => d.data.name)
+                .attr("font-size", "10px")
+                .attr("fill", "black");
+
+            // Add "WORLD" text in the center
+            svg.append("text")
+                .attr("text-anchor", "middle")
+                .attr("font-size", "24px")
+                .attr("font-weight", "bold")
+                .attr("fill", "#333")
+                .text("WORLD");
+        }
+
+        loadData();
+    </script>
+    <button onclick="refreshPage()">Reset</button>
+    <script>
+        function refreshPage() {
+            location.reload();
+        }
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Continent-wise Timeline Visualization</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap">
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: #f5f7fa;
+      color: #222;
+    }
+    svg {
+      display: block;
+      margin: auto;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 8px 32px rgba(44, 62, 80, 0.08);
+      border: 1px solid #eaeaea;
+    }
+    .axis path,
+    .axis line {
+      fill: none;
+      shape-rendering: crispEdges;
+    }
+    .grid line {
+      stroke: #e0e7ef;
+      stroke-opacity: 0.7;
+      shape-rendering: crispEdges;
+    }
+    .grid path {
+      stroke-width: 0;
+    }
+    .tooltip {
+      position: absolute;
+      background: #fff;
+      color: #1976d2;
+      border: 1px solid #eaeaea;
+      padding: 10px 14px;
+      border-radius: 10px;
+      pointer-events: none;
+      opacity: 0;
+      box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+      transition: opacity 0.2s;
+      font-family: 'Poppins', sans-serif;
+      font-size: 13px;
+    }
+    .legend {
+      font-size: 14px;
+      margin: 10px;
+      position: absolute;
+      top: 20px;
+      right: 220px;
+      width: 200px;
+      padding: 10px;
+      background-color: #fff;
+      border-radius: 10px;
+      border: 1px solid #eaeaea;
+      box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+      font-family: 'Poppins', sans-serif;
+    }
+    .legend div {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .legend span {
+      width: 100px;
+      height: 20px;
+      margin-right: 8px;
+      border-radius: 3px;
+    }
+    #playBtn,
+    #pauseBtn {
+      padding: 10px 20px;
+      margin: 20px;
+      background-color: #1976d2;
+      color: white;
+      border: none;
+      font-size: 16px;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+      transition: background 0.2s;
+    }
+    #playBtn:hover,
+    #pauseBtn:hover {
+      background-color: #1565c0;
+    }
+    #playBtn:focus,
+    #pauseBtn:focus {
+      outline: none;
+    }
+    #pauseBtn {
+      display: none;
+    }
+    select {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1rem;
+      margin: 0 8px 0 0;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid #eaeaea;
+      background: #fff;
+      color: #222;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 style="text-align: center;">Continent-wise Timeline Visualization</h1>
+  <div id="chart"></div>
+  <button id="playBtn">Play</button>
+  <button id="pauseBtn">Pause</button>
+
+  <!-- Legend Section -->
+  <div id="legend" class="legend"></div>
+  <!-- Dropdowns for selecting continent or all continents -->
+<div style="text-align: center; margin-top: 20px;">
+  <select id="continentDropdown">
+    <option value="all">All Continents</option>
+    <option value="Asia">Asia</option>
+    <option value="Africa">Africa</option>
+    <option value="North America">North America</option>
+    <option value="South America">South America</option>
+    <option value="Antarctica">Antarctica</option>
+    <option value="Europe">Europe</option>
+    <option value="Australia">Australia</option>
+    <option value="Islands">Islands</option>
+  </select>
+</div>
+
+
+  <script>
+    // Chart dimensions
+    const margin = { top: 40, right: 200, bottom: 50, left: 60 },
+      width = 1000 - margin.left - margin.right,
+      height = 500 - margin.top - margin.bottom;
+
+    const svg = d3.select("#chart")
+      .append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Define continents and their regions
+    const continentRegions = {
+      "Asia": ["Southern Asia", "Western Asia", "Eastern Asia", "Central Asia", "South-Eastern Asia", "Eastern Asia"],
+      "Africa": ["Northern Africa", "Middle Africa", "Southern Africa", "Eastern Africa", "Western Africa"],
+      "North America": ["Northern America", "Central America", "Caribbean"],
+      "South America": ["South America"],
+      "Antarctica": ["Antarctica"],
+      "Europe": ["Southern Europe", "Western Europe", "Northern Europe", "Eastern Europe"],
+      "Australia": ["Australia and New Zealand", "Polynesia", "Melanesia", "Micronesia"],
+      "Islands": ["Polynesia", "Micronesia", "Channel Islands"]
+    };
+
+    let isPlaying = false;
+    let currentYear = 2000;
+    let animationInterval;
+
+    // Tooltip element
+    const tooltip = d3.select("body").append("div")
+      .attr("class", "tooltip")
+      .style("opacity", 0);
+
+    // Parse data
+    d3.csv("preprocessed_data.csv").then(data => {
+      // Extract years and regions
+      const years = d3.range(2000, 2018); // Available years
+
+      // Aggregate data continent-wise by summing values
+      const continentData = Object.keys(continentRegions).map(continent => {
+        const regions = continentRegions[continent];
+        const values = years.map(year => ({
+          year,
+          value: d3.sum(data.filter(d => regions.includes(d.parentName)), d => +d[`value_${year}`])
+        }));
+        return { continent, values };
+      });
+
+      // Define scales
+      const x = d3.scaleLinear()
+        .domain(d3.extent(years))
+        .range([0, width]);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(continentData, continent => d3.max(continent.values, v => v.value))])
+        .nice()
+        .range([height, 0]);
+
+      const color = d3.scaleOrdinal(d3.schemeCategory10)
+        .domain(Object.keys(continentRegions));
+
+      // Add axes
+const xAxis = d3.axisBottom(x).tickFormat(d3.format("d"));
+const yAxis = d3.axisLeft(y);
+
+// Add x-axis at the bottom
+svg.append("g")
+  .attr("transform", `translate(0,${height})`)  // Place it at the bottom
+  .call(xAxis)
+  .append("text") // X-axis label
+  .attr("x", width / 2)
+  .attr("y", margin.bottom - 10)
+  .style("text-anchor", "middle")
+  .text("Year");  // X-axis label
+
+// Add y-axis on the left
+svg.append("g")
+  .call(yAxis)
+  .append("text") // Y-axis label
+  .attr("transform", "rotate(-90)") // Rotate label to make it vertical
+  .attr("x", -height / 2)  // Adjust position of the label
+  .attr("y", -margin.left + 10)  // Position the label appropriately
+  .style("text-anchor", "middle")
+  .text("TB Cases");  // Y-axis label
+
+
+      // Add gridlines
+      svg.append("g")
+        .attr("class", "grid")
+        .call(d3.axisLeft(y).tickSize(-width).tickFormat(""));
+      svg.append("g")
+        .attr("class", "grid")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x).tickSize(-height).tickFormat(""));
+
+      // Add lines for each continent
+      const line = d3.line()
+        .x(d => x(d.year))
+        .y(d => y(d.value));
+
+      // Create paths and store them in 'paths' variable
+      const paths = svg.selectAll(".line")
+        .data(continentData)
+        .enter()
+        .append("path")
+        .attr("class", "line")
+        .attr("fill", "none")
+        .attr("stroke", d => color(d.continent))
+        .attr("stroke-width", 2)
+        .attr("d", d => line(d.values))
+        .on("mouseover", function (event, d) {
+          tooltip.style("opacity", 1)
+            .html(`Continent: ${d.continent}`);
+
+          // Ensure 'this' refers to the path element, and increase stroke width
+          d3.select(this).transition().duration(200).attr("stroke-width", 7);
+        })
+        .on("mouseout", function () {
+          tooltip.style("opacity", 0);
+          // Reset stroke width after mouseout
+          d3.select(this).transition().duration(200).attr("stroke-width", 2);
+        })
+        .on("mousemove", (event, d) => {
+          const [mouseX] = d3.pointer(event);
+          const year = Math.round(x.invert(mouseX));
+          const value = d.values.find(v => v.year === year)?.value || "N/A";
+
+          // Ensure value is a number before calling toFixed
+          const formattedValue = typeof value === "number" ? value.toFixed(2) : value;
+
+          tooltip.style("left", `${event.pageX + 10}px`)
+            .style("top", `${event.pageY + 10}px`)
+            .html(`Continent: ${d.continent}<br>Year: ${year}<br>Value: ${formattedValue}`);
+        })
+        .each(function () {
+          const path = d3.select(this);
+          path.attr("stroke-dasharray", path.node().getTotalLength() + " " + path.node().getTotalLength())
+            .attr("stroke-dashoffset", path.node().getTotalLength());
+        });
+
+      // Legend for continents
+      const legend = d3.select("#legend");
+
+      continentData.forEach(continent => {
+        const legendItem = legend.append("div");
+        legendItem.append("span")
+          .style("background-color", color(continent.continent));
+        legendItem.append("span")
+          .text(continent.continent);
+      });
+
+      // Animation logic
+      function animateData() {
+        paths.transition()
+          .duration(500)
+          .attr("stroke-dashoffset", function (d) {
+            const pathLength = this.getTotalLength();
+            return pathLength - (pathLength * (currentYear - 2000) / (2017 - 2000));
+          });
+      }
+
+      // Pause the animation
+      function pauseAnimation() {
+        clearInterval(animationInterval);
+        isPlaying = false;
+        d3.select('#playBtn').style('display', 'inline-block');
+        d3.select('#pauseBtn').style('display', 'none');
+      }
+
+      // Start the animation
+      function startAnimation() {
+        if (!isPlaying) {
+          isPlaying = true;
+          animationInterval = setInterval(() => {
+            currentYear++;
+            if (currentYear > 2017) {
+              clearInterval(animationInterval);
+              isPlaying = false;
+              d3.select('#playBtn').style('display', 'inline-block');
+              d3.select('#pauseBtn').style('display', 'none');
+            } else {
+              animateData();
+            }
+          }, 400);
+          d3.select('#playBtn').style('display', 'none');
+          d3.select('#pauseBtn').style('display', 'inline-block');
+        }
+      }
+
+      // Add event listeners to control play/pause
+      d3.select('#playBtn').on('click', startAnimation);
+      d3.select('#pauseBtn').on('click', pauseAnimation);
+    });
+
+    // Dropdown for selecting a continent
+const continentDropdown = d3.select("#continentDropdown");
+
+// Function to update the chart based on selected continent
+function updateChart(selectedContinent) {
+  // Show or hide lines based on the selected continent
+  paths.each(function (d) {
+    const path = d3.select(this);
+    if (selectedContinent === "all" || d.continent === selectedContinent) {
+      path.style("display", "inline");
+    } else {
+      path.style("display", "none");
+    }
+  });
+}
+
+// Add event listener for continent selection
+continentDropdown.on("change", function() {
+  const selectedContinent = this.value;
+  updateChart(selectedContinent);
+});
+
+// Initial chart update (show all continents by default)
+updateChart("all");
+
+  </script>
+</body>
+
+</html>
